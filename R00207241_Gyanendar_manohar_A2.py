@@ -124,28 +124,7 @@ def task1(excel_path):
                    solver.NumVar(0, 
                    solver.infinity(), f"{supplier_v2}_{factory_v2}_{material_v2}")
 
-    # Sheet7
-    #
-    # Part D
-    # number of unit each product ordered by customer
-    # Which factory ship
-    #
-    # Factory should produce enough to meet the customer demand
-    # So minimum value should be customer demand
-    for product_s7 in products:
-        for customer_s7 in customers:
-            cust_demand = \
-                cust_demand_df[cust_demand_df['product'] == \
-                                 product_s7][customer_s7].to_list()[0]
-            # Min-> customer demand
-            # Max-> can be anything above it
-            customer_demand_factory_output_constraint = \
-                solver.Constraint(
-                cust_demand, solver.infinity())
-            # Set the coefficient    
-            for factory_s7 in factories:
-                customer_demand_factory_output_constraint.SetCoefficient(
-                    fact_cust_prod_unit[(factory_s7, customer_s7, product_s7)], 1.0)
+    
 
     # supplier stock
     # Sheet1
@@ -184,11 +163,11 @@ def task1(excel_path):
                 production_capacity_constraint.SetCoefficient(
                     fact_cust_prod_unit[(factory_s5, customer_s5, product_s5)], 1.0)
 
-    # Sheet4
-    #
+    
+    # Part C
     # Part D
     # Part F
-    #
+    # Sheet4
     # Product RAW Material Requirements
     # Raw Material required to manufacture a unit of product
     # Factory consumes raw materials which supplied by suppliers and produces products
@@ -221,6 +200,27 @@ def task1(excel_path):
                         fact_cust_prod_unit[(factory_s4, customer_s4, product_s4)], 
                     float(-1.0*product_req_df[product_req_df['product'] ==\
                          product_s4][raw_mat_s4].to_list()[0]))
+    
+    # Sheet7
+    #    
+    #
+    # Factory should produce enough to meet the customer demand
+    # So minimum value should be customer demand
+    for product_s7 in products:
+        for customer_s7 in customers:
+            cust_demand = \
+                cust_demand_df[cust_demand_df['product'] == \
+                                 product_s7][customer_s7].to_list()[0]
+            # Min-> customer demand
+            # Max-> can be anything above it
+            customer_demand_factory_output_constraint = \
+                solver.Constraint(
+                cust_demand, solver.infinity())
+            # Set the coefficient    
+            for factory_s7 in factories:
+                customer_demand_factory_output_constraint.SetCoefficient(
+                    fact_cust_prod_unit[(factory_s7, customer_s7, product_s7)], 1.0)
+
 
     # Set objective
     #
@@ -688,6 +688,54 @@ def task3(excel_path):
         for leg_2 in station_names:
             if leg_1!=leg_2: #(station (A,A) is not valid pair)
                 station_name_pair.append((leg_1,leg_2))
+
+    # Get all station of line sorted as per their occurance
+    # is it circular
+    # total distance in one direction
+    line_station_pair = {}  #[line] = [stations],distance(time),iscircular
+    for train_line in line_names:       
+       station_order_pair = []
+       for station in station_names:
+           # if NaN is returned for line,station combination means that station
+           # doesnt belongs to the line and should be ignored
+           if(not math.isnan(stops_df[stops_df['station']==station][train_line].tolist()[0])):
+               # Store number and station name
+               station_order_pair.append((stops_df[stops_df['station']==station][train_line].tolist()[0],station))
+       #Sort the ltuple list , the and get station in sorted order as per their position in line
+       station_order_pair = sorted(station_order_pair)  
+       #for station name list as per their occurance
+       sorted_station = [name for _,name in station_order_pair]
+       # Get Length/time taken to cover the line
+       line_length = 0
+       for index in range(len(sorted_station)-1):
+           line_length = line_length+ distances_df[distances_df['station']==sorted_station[index]][sorted_station[index+1]].tolist()[0]
+       #if distance between two end station of line is not defined, means line is not circular
+       is_circular = False if math.isnan(distances_df[distances_df['station']==sorted_station[0]][sorted_station[-1]].tolist()[0])else True
+       if is_circular == True:
+           #if line is circular, consider distance between last and 1st station as well for total length
+           line_length = line_length+ distances_df[distances_df['station']==sorted_station[-1]][sorted_station[0]].tolist()[0]
+       # Save
+       line_station_pair[train_line] = (sorted_station,line_length,is_circular)
+
+    # form lookup for train-pair and train line
+    station_leg_pair_line_lookup = {}
+    for train_line in line_names:
+        # Keep seperate list of forward and back ward legs pair
+        # This will give all combination of train
+        forward_station_list = line_station_pair[train_line][0]
+        #backward
+        return_station_list = forward_station_list[::-1]
+        is_circular = line_station_pair[train_line][2]
+        #fill the station pair and line in dict
+        for index in range(len(forward_station_list)-1):
+            #train station pair is key and line as value
+            station_leg_pair_line_lookup[(forward_station_list[index],forward_station_list[index+1])] = train_line
+            station_leg_pair_line_lookup[(return_station_list[index],return_station_list[index+1])] = train_line
+            #for circular line add last and 1st station as new leg
+            if is_circular == True:
+                station_leg_pair_line_lookup[(forward_station_list[-1],forward_station_list[0])] = train_line
+                station_leg_pair_line_lookup[(return_station_list[-1],return_station_list[0])] = train_line
+
     #Iterate through the station name pair list and 
     # get the shortest path and shortes distance between them
 
@@ -777,10 +825,21 @@ def task3(excel_path):
                     path.append(next_station)
                     current_station = next_station
                     break
-
-        print(f"{source_station}->{destination_station}: distance:{time_objective.Value()}: Path: {path}")        
+               
         shortest_path.append((source_station,destination_station,time_objective.Value(),path))
 
+    #Print the source,destination,
+    #travel time, path used
+    #and train lines for each pair of station
+    for item in shortest_path:
+        path = item[3]
+        # Get train line for each leg
+        train_lines = []
+        for index in range(len(path)-1):            
+            train_lines.append(station_leg_pair_line_lookup[(path[index],path[index+1])])
+        # Print source, destination, travel time, optimal route and lines to which each leg of 
+        # route belongs to
+        print(f"{item[0]}-->{item[1]}:Travel Time:{item[2]} Travel Route:{path}: Train Line:{train_lines}")
 
     # Part C
     # 
@@ -789,21 +848,184 @@ def task3(excel_path):
     #create solver object
     #Set objective     
     solver = pywraplp.Solver('LPWrapper',pywraplp.Solver.CBC_MIXED_INTEGER_PROGRAMMING)
-    
 
+
+    # a. create decision variable to determine 
+    # number of train required to meet the passanger demand
+    #
     # for simplification
     # take forward and backward journey seperately 
-    # create decision variables for forward & backward journey seperately
+    # create decision variables for total train on 
+    # forward & backward journey seperately
     train_on_forward_journey = {}
     train_on_return_journey = {}
     # Train is for per line
     for train_line in line_names:
         #Forward
-        train_on_forward_journey[train_line] = solver.IntVar(0, solver.infinity(), f"fw>>[{train_line}]>>")
+        train_on_forward_journey[train_line] = \
+            solver.IntVar(0, solver.infinity(), f"fw>>[{train_line}]>>")
         #Backward
-        #TODO:May not need for circular line
-        train_on_return_journey[train_line] = solver.IntVar(0, solver.infinity(), f"bw<<[{train_line}]<<")
+        train_on_return_journey[train_line] = \
+            solver.IntVar(0, solver.infinity(), f"bw<<[{train_line}]<<")
+
+    # Train frequency is per hour
+    # Need decision variable to account this as wel
+    # Train required per hour
+    hourly_train_count_forward_journey = {}
+    hourly_train_count_return_journey = {}
+    for train_line in line_names:
+        hourly_train_count_forward_journey[train_line] = \
+            solver.IntVar(0, solver.infinity(), f"fw_hr>>[{train_line}]>>")
+        hourly_train_count_return_journey[train_line] = \
+            solver.IntVar(0, solver.infinity(), f"bw_hr<<[{train_line}]<<") 
+    ########################################################################
+    # passenger load on forward and backward journey
+    # Need to create map for passenger load  requirement 
+    # for each station combination in line basis    
+    forward_journey_pass_load = {}
+    #passanger load on return journey per line
+    return_journey_pass_load = {}
+    for train_line in line_names:
+        # Create dict for each station combination of station for that line
+        forward_journey_pass_load[train_line] = \
+            {(stop_1,stop_2):0 for stop_1 in station_names for stop_2 in station_names} 
+
+        return_journey_pass_load[train_line] = \
+            {(stop_1,stop_2):0 for stop_1 in station_names for stop_2 in station_names} 
+    
+    # Passagner capacity for train on each lines -> 
+    # All train for the line will have same passanger capacity
+    for train_line in line_names:
+        # Get capacity for the line
+        line_passenger_capacity = trains_df[trains_df['line']==train_line]['Capacity'].tolist()[0]
+        # Get All train list for the line and information about circular/non-circular
+        fw_station_list,_,is_circular = line_station_pair[train_line]
+        # Reverse station order
+        rev_station_list = fw_station_list[::-1]
+        # Fill the forward & return passanger load
+        #all train for the line will have same CAPACITY
+        for index in range(len(fw_station_list)-1):
+                # The passanger load woul be the line capacity
+                forward_journey_pass_load[train_line]\
+                    [(fw_station_list[index],fw_station_list[index+1])] = line_passenger_capacity
+                return_journey_pass_load[train_line]\
+                    [(rev_station_list[index],rev_station_list[index+1])] = line_passenger_capacity
         
+        # for circular line, a leg need from last station to first station 
+        # of the route which will make path complete circle
+        if is_circular == True:
+            # The passanger load woul be the line capacity
+            forward_journey_pass_load[train_line]\
+                [(fw_station_list[-1],fw_station_list[0])] = line_passenger_capacity
+            return_journey_pass_load[train_line]\
+                [(rev_station_list[-1],rev_station_list[0])] = line_passenger_capacity  
+    
+    # Passenger Load from shortest path
+    # Passanger use shortest route for travelling 
+    # All possible pair of station, the number of passanger 
+    # may travel between them
+    shortest_path_passenger_load = {}
+    for stop_1 in station_names:        
+        for stop_2 in station_names:     
+                #initial value->0 
+            shortest_path_passenger_load[(stop_1,stop_2)] = 0
+    
+    #Passanger travel is taken hourly basis
+    for item in shortest_path:     
+        # item[0] is source
+        # item[1] is destination   
+        # item[3] has optimised path used for travelling
+        # Get the passanger count value from passanger sheet( which is hourly load)
+        # and add it to shortest_path_passenger_load(source,destination)
+        for index in range(len(item[3])-1):            
+            shortest_path_passenger_load[(item[3][index],item[3][index+1])]+= \
+                int(passangers_df[passangers_df['station']==item[0]][item[1]].tolist()[0]) 
+    # Above passanger load is hourly requirement
+    # use this for creating constraint on hourly conditional variable
+    for stop_1 in station_names:        
+        for stop_2 in station_names: 
+            # create constraint for hourly passanger load 
+            # lower bound would be value from passanger sheet( for optimised path)
+            hourly_passenger_load_constraint = \
+                solver.Constraint(int(shortest_path_passenger_load[(stop_1,stop_2)]), solver.infinity())
+            # for each line
+            # coefficient need to be set for hourly train count variable
+            for train_line in line_names:
+                # for forward & return journey
+                hourly_passenger_load_constraint\
+                    .SetCoefficient(hourly_train_count_forward_journey[train_line],\
+                         int(forward_journey_pass_load[train_line][(stop_1,stop_2)]))
+                hourly_passenger_load_constraint\
+                    .SetCoefficient(hourly_train_count_return_journey[train_line],\
+                         int(return_journey_pass_load[train_line][(stop_1,stop_2)]))
+
+    # For circular line, minimum 2 train would be running
+    # For non-circular line, same train go forward and returns
+    # hence total train count for forward journey and return
+    # Journey should be same
+   
+    
+    # freqency of train is hourly
+    # here the ask is to get total number of train requirement
+    # which would be total time taken by train to complete its journey
+    # times frequency
+    # Apply this on forward & backward jounery conditional variable
+    for train_line in line_names:
+        # Get total journey time for each line
+        #forward journey time
+        time = line_station_pair[train_line][1]
+        # if line is not circular, the journey time would be double 
+        # of forward journey time value
+        time = time + (time if line_station_pair[train_line][2] is False else 0)
+        # this is in minute. convert it to hour
+        time = time/60
+        # for forward journey
+        forward_journey_constraint = solver.Constraint(0, solver.infinity())            
+        forward_journey_constraint.SetCoefficient(train_on_forward_journey[train_line], 1)
+        forward_journey_constraint.SetCoefficient(hourly_train_count_forward_journey[train_line], -time)
+        # for backward journey
+        return_journey_constraint = solver.Constraint(0, solver.infinity())        
+        return_journey_constraint.SetCoefficient(train_on_return_journey[train_line], 1)
+        return_journey_constraint.SetCoefficient(hourly_train_count_return_journey[train_line], -time)
+
+    
+    #########################################################################
+
+
+    # c. Objective
+    # minimise the number of trains operated on the network 
+    train_count_objective = solver.Objective()
+    # for minimisation task
+    train_count_objective.SetMinimization()
+    # Set objective
+    #
+    for train_line in line_names:
+        # train on non-circular line 
+        # always going back and forth between the terminal stations
+        train_count_objective\
+            .SetCoefficient(train_on_forward_journey[train_line], 1)
+        
+        # for circular line: 
+        # one in clockwise direction the other in anti-clockwise direction.
+        # so minimum 2 train required at any point of time
+        # take return journey train count also
+        if line_station_pair[train_line][2]== True:
+            train_count_objective\
+                .SetCoefficient(train_on_return_journey[train_line], 1)
+
+    # d. 
+    solver.Solve()
+    print()
+    print(f"Total train required:{train_count_objective.Value()}")
+    #Train required per line
+    for train_line in line_names:
+        if line_station_pair[train_line][2]!= True:
+            print(f"{train_line}:{train_on_forward_journey[train_line].SolutionValue()}")
+        # For circular line, take return_journey value aswel
+        if line_station_pair[train_line][2]== True:
+            print(f"{train_line}:\
+                {train_on_forward_journey[train_line].SolutionValue()},\
+                    {train_on_return_journey[train_line].SolutionValue()}")
 
 def main():    
     task1('Assignment_DA_2_Task_1_data.xlsx')
